@@ -6,13 +6,12 @@ const { Header, Sider, Content } = Layout
 
 const menuItems = [
   { key: '/', icon: <DashboardOutlined />, label: <Link to="/">首页</Link> },
-  // 占位项：第 3、4 章会启用
   {
     key: '/documents',
     icon: <FileTextOutlined />,
-    label: '文档管理',
-    disabled: true,
+    label: <Link to="/documents">文档管理</Link>,
   },
+  // 第 4 章启用
   {
     key: '/chat',
     icon: <MessageOutlined />,
@@ -21,8 +20,16 @@ const menuItems = [
   },
 ]
 
+function resolveSelectedKey(pathname: string): string {
+  // /documents/xxx 也保持"文档管理"高亮
+  if (pathname.startsWith('/documents')) return '/documents'
+  if (pathname.startsWith('/chat')) return '/chat'
+  return '/'
+}
+
 export function BasicLayout() {
   const location = useLocation()
+  const selectedKey = resolveSelectedKey(location.pathname)
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -41,7 +48,7 @@ export function BasicLayout() {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedKey]}
           items={menuItems}
         />
       </Sider>
