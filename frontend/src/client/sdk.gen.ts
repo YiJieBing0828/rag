@@ -2,7 +2,7 @@
 
 import { type Client, formDataBodySerializer, type Options as Options2, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateConversationData, CreateConversationErrors, CreateConversationResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DownloadDocumentData, DownloadDocumentErrors, DownloadDocumentResponses, GetConversationData, GetConversationErrors, GetConversationResponses, GetDocumentChunkData, GetDocumentChunkErrors, GetDocumentChunkResponses, GetDocumentData, GetDocumentErrors, GetDocumentResponses, HealthAppData, HealthAppResponses, HealthCosData, HealthCosResponses, HealthDbData, HealthDbResponses, ListDocumentChunksData, ListDocumentChunksErrors, ListDocumentChunksResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, RetryDocumentData, RetryDocumentErrors, RetryDocumentResponses, StreamChatData, StreamChatErrors, StreamChatResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses } from './types.gen';
+import type { CreateConversationData, CreateConversationErrors, CreateConversationResponses, DeleteConversationData, DeleteConversationErrors, DeleteConversationResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DownloadDocumentData, DownloadDocumentErrors, DownloadDocumentResponses, GetConversationData, GetConversationErrors, GetConversationResponses, GetDocumentChunkData, GetDocumentChunkErrors, GetDocumentChunkResponses, GetDocumentData, GetDocumentErrors, GetDocumentResponses, HealthAppData, HealthAppResponses, HealthCosData, HealthCosResponses, HealthDbData, HealthDbResponses, ListConversationsData, ListConversationsErrors, ListConversationsResponses, ListDocumentChunksData, ListDocumentChunksErrors, ListDocumentChunksResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, RetryDocumentData, RetryDocumentErrors, RetryDocumentResponses, StreamChatData, StreamChatErrors, StreamChatResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -93,6 +93,11 @@ export const listDocumentChunks = <ThrowOnError extends boolean = false>(options
 export const getDocumentChunk = <ThrowOnError extends boolean = false>(options: Options<GetDocumentChunkData, ThrowOnError>) => (options.client ?? client).get<GetDocumentChunkResponses, GetDocumentChunkErrors, ThrowOnError>({ url: '/api/documents/{document_id}/chunks/{chunk_id}', ...options });
 
 /**
+ * 按更新时间倒序分页列出所有会话
+ */
+export const listConversations = <ThrowOnError extends boolean = false>(options?: Options<ListConversationsData, ThrowOnError>) => (options?.client ?? client).get<ListConversationsResponses, ListConversationsErrors, ThrowOnError>({ url: '/api/conversations', ...options });
+
+/**
  * Create Conversation
  */
 export const createConversation = <ThrowOnError extends boolean = false>(options: Options<CreateConversationData, ThrowOnError>) => (options.client ?? client).post<CreateConversationResponses, CreateConversationErrors, ThrowOnError>({
@@ -103,6 +108,11 @@ export const createConversation = <ThrowOnError extends boolean = false>(options
         ...options.headers
     }
 });
+
+/**
+ * Delete Conversation
+ */
+export const deleteConversation = <ThrowOnError extends boolean = false>(options: Options<DeleteConversationData, ThrowOnError>) => (options.client ?? client).delete<DeleteConversationResponses, DeleteConversationErrors, ThrowOnError>({ url: '/api/conversations/{conversation_id}', ...options });
 
 /**
  * Get Conversation
@@ -116,10 +126,11 @@ export const getConversation = <ThrowOnError extends boolean = false>(options: O
  *
  * SSE 流式问答。
  *
- * 事件协议：message_start → citations → token...(多次) → message_end；
- * 任何阶段出错改 yield error。前端用 @microsoft/fetch-event-source 接。
+ * 事件协议：message_start → query_route → agent_steps → citations → token...
+ * → [verify_result] → message_end；任何阶段出错改 yield error。
+ * 前端用 @microsoft/fetch-event-source 接。
  */
-export const streamChat = <ThrowOnError extends boolean = false>(options: Options<StreamChatData, ThrowOnError>) => (options.client ?? client).post<StreamChatResponses, StreamChatErrors, ThrowOnError>({
+export const streamChat = <ThrowOnError extends boolean = false>(options: Options<StreamChatData, ThrowOnError, unknown>) => (options.client ?? client).sse.post<StreamChatResponses, StreamChatErrors, ThrowOnError>({
     url: '/api/conversations/{conversation_id}/chat',
     ...options,
     headers: {
