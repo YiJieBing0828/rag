@@ -1,7 +1,11 @@
 services:
   postgres:
-    # 直接使用 pgvector/pgvector 镜像，第 3 章 CREATE EXTENSION vector 时无需替换镜像
-    image: pgvector/pgvector:pg16
+    # 自定义镜像：在 pgvector/pgvector:pg16 之上叠加 zhparser，
+    # 一次构建同时支持 pgvector（第 3 章）+ 中文全文检索（第 6 章）。
+    build:
+      context: .
+      dockerfile: postgres.Dockerfile
+    image: rag-kb-postgres:pg16
     container_name: rag-kb-postgres
     restart: unless-stopped
     environment:
