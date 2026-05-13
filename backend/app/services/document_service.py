@@ -9,6 +9,8 @@
 
 import hashlib
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import PurePath
 from uuid import UUID
 
@@ -79,6 +81,19 @@ def _resolve_mime_and_suffix(file: UploadFile) -> tuple[str, str]:
 _DELETABLE_STATUSES = frozenset(
     {DocumentStatus.READY, DocumentStatus.FAILED, DocumentStatus.UPLOADING}
 )
+
+
+@dataclass(frozen=True)
+class KnowledgeBaseStats:
+    """知识库整体规模快照，按调用者权限范围统计。
+
+    chunk_count 仅计入 status='ready' 的文档，与检索可见性一致；
+    last_indexed_at 取最近一次 ready 文档的 updated_at（含 reindex 后的刷新）。
+    """
+
+    document_count: int
+    chunk_count: int
+    last_indexed_at: datetime | None
 
 
 def _normalize_tags(tags: Sequence[str] | None) -> list[str]:
@@ -315,6 +330,29 @@ class DocumentService:
         )
         stats = await self.chunk_repo.get_stats(document_id)
         return items, total, stats
+
+    async def get_stats(
+        self,
+        *,
+        permission_tags: list[str] | None = None,
+    ) -> KnowledgeBaseStats:
+        """聚合 documents / chunks 总数与最新入库时间。
+
+        permission_tags：admin 视角传 None 不限；普通用户传合并后的有效标签，
+        三处统计 SQL 共用 `_permission_where` 保证可见性一致。
+        """
+        document_count = await self.repo.count(permission_tags=permission_tags)
+        chunk_count = await self.chunk_repo.count_visible(
+            permission_tags=permission_tags
+        )
+        last_indexed_at = await self.repo.get_last_indexed_at(
+            permission_tags=permission_tags
+        )
+        return KnowledgeBaseStats(
+            document_count=document_count,
+            chunk_count=chunk_count,
+            last_indexed_at=last_indexed_at,
+        )
 
     async def get_chunk(
         self,

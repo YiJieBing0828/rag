@@ -187,6 +187,27 @@ class DocumentChunkRepository:
         rows = (await self.session.execute(stmt)).all()
         return [(chunk, float(dist)) for chunk, dist in rows]
 
+    async def count_visible(
+        self,
+        *,
+        permission_tags: list[str] | None = None,
+    ) -> int:
+        """统计可见 chunks 总数。仅命中 status='ready' 文档，与检索口径一致。
+
+        MCP get_knowledge_base_stats 用：让外部 Agent 看到的"知识库规模"
+        与实际可被检索到的 chunk 数量对齐。
+        """
+        stmt = (
+            select(func.count())
+            .select_from(DocumentChunk)
+            .join(Document, Document.id == DocumentChunk.document_id)
+            .where(Document.status == "ready")
+        )
+        perm_where = _permission_where(permission_tags)
+        if perm_where is not None:
+            stmt = stmt.where(perm_where)
+        return int((await self.session.execute(stmt)).scalar_one())
+
     async def get_stats(self, document_id: UUID) -> ChunkStats | None:
         """一条聚合 SQL 拿到 count/avg/min/max，避免在 Python 侧再扫一遍 chunks。"""
         length = func.char_length(DocumentChunk.content)
