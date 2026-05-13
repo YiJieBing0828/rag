@@ -4,6 +4,7 @@
 第 6 章：升级为 HybridRetriever（向量 + 全文 + RRF 融合）。
 第 8 章：召回数量从 `retrieval_top_k` 放大到 `retrieval_recall_top_k`，
         把全部候选交给 rerank 精排，最终 Top-K 由 rerank 节点裁剪。
+第 11 章：把 state["permissions"] 透传到 retriever，让 SQL 层完成权限过滤。
 
 multi_query 路径下每个子查询独立做一次 hybrid 检索，再按第 5 章约定的
 朴素合并去重；不在子查询之间再做嵌套 RRF。
@@ -20,6 +21,7 @@ from app.workflows.rag_state import RAGState
 async def retrieve(state: RAGState) -> RAGState:
     retriever = HybridRetriever()
     recall_top_k = settings.retrieval_recall_top_k
+    permissions = state.get("permissions")
 
     if state.get("route") == "multi_query" and state.get("multi_queries"):
         # 各子查询独立走 hybrid 检索，再合并；不做嵌套 RRF
@@ -30,6 +32,7 @@ async def retrieve(state: RAGState) -> RAGState:
                     sub_query,
                     recall_top_k=recall_top_k,
                     final_top_k=recall_top_k,
+                    permission_tags=permissions,
                 )
             )
         chunks = _merge_chunks(bundles, top_k=recall_top_k)
@@ -38,6 +41,7 @@ async def retrieve(state: RAGState) -> RAGState:
             state["query"],
             recall_top_k=recall_top_k,
             final_top_k=recall_top_k,
+            permission_tags=permissions,
         )
 
     return {"retrieved_chunks": chunks}

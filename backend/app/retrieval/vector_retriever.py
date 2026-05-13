@@ -2,6 +2,7 @@
 
 第 4 章只做向量单路召回；第 6 章起作为 HybridRetriever 的一路输入，
 另一路是 KeywordRetriever，最终由 RRF 融合。
+第 11 章起 search 支持 permission_tags 透传到 chunk_repo SQL。
 """
 
 from dataclasses import dataclass, field
@@ -51,10 +52,17 @@ class VectorRetriever:
         self.chunk_repo = DocumentChunkRepository(session)
 
     @traceable(name="VectorRetriever.search", run_type="retriever")
-    async def search(self, query: str, top_k: int) -> list[RetrievedChunk]:
-        # 单 query 走 aembed_query，DashScope 单条调用更直接
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        permission_tags: list[str] | None = None,
+    ) -> list[RetrievedChunk]:
         embedding = await get_embeddings().aembed_query(query)
-        rows = await self.chunk_repo.vector_search(embedding, top_k)
+        rows = await self.chunk_repo.vector_search(
+            embedding, top_k, permission_tags=permission_tags
+        )
         return [
             RetrievedChunk(
                 chunk_id=chunk.id,
