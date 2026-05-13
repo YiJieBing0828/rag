@@ -31,6 +31,12 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://rag:rag@localhost:5432/rag_kb"
 
+    # ===== Redis（语义缓存 / 限流 / Celery broker，第 12 章引入）=====
+    # 应用直接客户端，不同 db 索引让 Celery broker / backend 互不干扰
+    redis_url: str = "redis://localhost:6379/0"
+    celery_broker_url: str = "redis://localhost:6379/1"
+    celery_result_backend: str = "redis://localhost:6379/2"
+
     cos_secret_id: str = ""
     cos_secret_key: str = ""
     cos_region: str = "ap-guangzhou"
@@ -130,6 +136,21 @@ class Settings(BaseSettings):
     default_admin_username: str = "admin"
     default_admin_password: str = "admin"
     default_admin_display_name: str = "管理员"
+
+    # ===== 语义缓存（第 12 章）=====
+    # 关掉后 chat 主链路完全跳过缓存查询/写入，方便对比有/无缓存的效果
+    semantic_cache_enabled: bool = True
+    # 单条缓存最大存活时间（秒），默认 1 小时；TTL 写入每条 Hash 后由 Redis 自行过期
+    semantic_cache_ttl_seconds: int = 3600
+    # 余弦相似度阈值：相似度 ≥ 此值且权限范围一致才视为命中。
+    # RedisVL 内部用「余弦距离 = 1 - 余弦相似度」做 KNN 查询，转换在 service 层完成
+    semantic_cache_min_similarity: float = 0.92
+
+    # ===== 滑动窗口限流（第 12 章）=====
+    # 关掉后 enforce_rate_limit dependency 直接放行
+    rate_limit_enabled: bool = True
+    # 单用户每分钟最大写请求数（chat / 上传 / 重新索引共用一个窗口）
+    rate_limit_per_minute: int = 60
 
     @property
     def effective_rerank_api_key(self) -> str:
