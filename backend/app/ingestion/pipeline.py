@@ -16,7 +16,7 @@ from app.db.models import DocumentChunk, DocumentStatus
 from app.db.repositories.chunk_repo import DocumentChunkRepository
 from app.db.repositories.document_repo import DocumentRepository
 from app.db.repositories.ingestion_task_repo import IngestionTaskRepository
-from app.db.session import AsyncSessionLocal
+from app.db.session import AsyncSessionLocal, engine
 from app.ingestion import embedder, parser, splitter
 from app.storage.file_service import get_file_service
 
@@ -327,11 +327,24 @@ def _make_chunk(
 
 
 # ---------- 同步入口：供 Celery worker 调用 ----------
+#
+# ⚠ 每个任务 asyncio.run() 都新建一个 event loop，而 app.db.session.engine 的
+# 连接池是模块级、跨任务共享的。asyncpg 的连接绑定在「创建它的那个 loop」上，
+# 于是第 2 个任务复用到第 1 个 loop 留下的连接时报
+# AttributeError: 'NoneType' object has no attribute 'send'（实测，Windows）。
+# 修法：任务结束时清空连接池，逼下一个任务在自己的 loop 里新建连接。
+
+
+async def _run_then_dispose(coro) -> None:
+    try:
+        await coro
+    finally:
+        await engine.dispose()
 
 
 def run_ingest_sync(document_id: UUID, task_id: UUID) -> None:
-    asyncio.run(_run_ingest(document_id, task_id))
+    asyncio.run(_run_then_dispose(_run_ingest(document_id, task_id)))
 
 
 def run_reindex_sync(document_id: UUID, task_id: UUID) -> None:
-    asyncio.run(_run_reindex(document_id, task_id))
+    asyncio.run(_run_then_dispose(_run_reindex(document_id, task_id)))
