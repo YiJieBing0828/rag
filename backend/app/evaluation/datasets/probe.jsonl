@@ -1,0 +1,7 @@
+{"id": "probe_001", "question": "EdgeServer B200 的整机保修期是几年？", "expected_answer": "EdgeServer B200 整机保修期为 5 年有限保修（4 小时现场响应服务，包含预防性维护）。", "expected_document_names": ["产品技术规格-B200.md"], "expected_keywords": ["5 年有限保修"], "should_refuse": false, "tags": ["产品规格", "A100-B200 混淆探针"]}
+{"id": "probe_002", "question": "EdgeServer A100 的整机重量是多少？", "expected_answer": "EdgeServer A100 整机重量约 8.5 kg（标配，不含扩展盘）。", "expected_document_names": ["产品技术规格-A100.md"], "expected_keywords": ["8.5 kg"], "should_refuse": false, "tags": ["产品规格", "重量探针"]}
+{"id": "probe_003", "question": "一线城市出差，总监及以上级别的每晚住宿报销上限是多少？", "expected_answer": "一线城市出差，总监及以上级别住宿费报销上限为每晚 800 元。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["800 元/晚"], "should_refuse": false, "tags": ["差旅", "同表不同行探针"]}
+{"id": "probe_004", "question": "员工出差期间住在当地亲友家里，在一线城市每晚可以申领多少住宿补贴？", "expected_answer": "出差期间住在个人亲友处，可申领住宿补贴：一线城市 150 元/晚，其他城市 100 元/晚。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["150 元/晚"], "should_refuse": false, "tags": ["差旅", "散文条款探针"]}
+{"id": "probe_005", "question": "EdgeServer B200 的边缘视频分析最多支持多少路 1080P 并发？", "expected_answer": "EdgeServer B200 的边缘视频分析支持最多 64 路 1080P 并发。", "expected_document_names": ["产品技术规格-B200.md"], "expected_keywords": ["64 路"], "should_refuse": false, "tags": ["产品规格", "A100-B200 数字混淆探针"]}
+{"id": "probe_006", "question": "实习生出差按什么标准报销？", "expected_answer": "实习生出差须经部门总监审批，标准参照初级岗执行。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["初级岗", "总监审批"], "should_refuse": false, "tags": ["差旅", "跨章节探针"]}
+

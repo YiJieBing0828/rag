@@ -1,0 +1,3 @@
+{"id": "p2_001", "question": "我是一线城市的主管，出差住酒店一晚上公司最多能给我报多少钱？", "expected_answer": "一线城市、主管及以下级别，住宿费报销上限为每晚 500 元（含早餐）。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["500"], "should_refuse": false, "tags": ["差旅", "口语长句探针"]}
+{"id": "p2_002", "question": "公司给员工报销住酒店的钱有没有封顶？一线城市主管级别封多少？", "expected_answer": "一线城市主管及以下级别住宿费封顶为每晚 500 元。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["500"], "should_refuse": false, "tags": ["差旅", "换词探针"]}
+{"id": "p2_003", "question": "下周我要从深圳去北京出差三天，我是刚升上来的主管，想提前算一下住宿这块最多能花多少、公司能给报多少，麻烦告诉我一线城市主管级的每晚住宿报销上限是多少钱？", "expected_answer": "一线城市主管及以下级别住宿费报销上限为每晚 500 元（含早餐）。", "expected_document_names": ["差旅管理制度.md"], "expected_keywords": ["500"], "should_refuse": false, "tags": ["差旅", "超长句探针"]}

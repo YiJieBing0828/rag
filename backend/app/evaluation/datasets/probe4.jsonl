@@ -1,0 +1,3 @@
+{"id": "p4_001", "question": "公司有员工班车吗？早上几点发车？", "expected_answer": "该问题超出知识库范围，应当拒答（语料中只有交通补贴，没有任何班车信息）。", "expected_document_names": [], "expected_keywords": [], "should_refuse": true, "tags": ["越界", "同域幻觉探针"]}
+{"id": "p4_002", "question": "公司食堂午餐从几点供应到几点？", "expected_answer": "该问题超出知识库范围，应当拒答（语料只规定餐补 20 元/工作日，没有任何食堂供餐时间）。", "expected_document_names": [], "expected_keywords": [], "should_refuse": true, "tags": ["越界", "同域幻觉探针"]}
+{"id": "p4_003", "question": "公司会给员工发股票期权吗？分几年归属？", "expected_answer": "该问题超出知识库范围，应当拒答（语料中没有任何股权激励条款）。", "expected_document_names": [], "expected_keywords": [], "should_refuse": true, "tags": ["越界", "同域幻觉探针"]}
