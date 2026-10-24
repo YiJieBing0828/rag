@@ -35,6 +35,43 @@ from app.workflows.rag_state import RAGState
 
 logger = get_logger(__name__)
 
+# 「模型自述拒答」的识别特征。
+# 起因：拒答其实有两条路径——
+#   路径 A（检索层闸门）：judge_context / observe_context 判分不够 ⇒ refuse 节点置 refused=True，
+#                         answer 恒等于 REFUSAL_ANSWER；
+#   路径 B（生成层自述）：检索过了闸门，但模型读完片段后自己判断答不了，
+#                         按系统提示第 2 条输出「抱歉，知识库中没有找到相关信息。」——
+#                         此时 state["refused"] 仍是 None，评测里会被算成「该拒未拒」。
+# 路径 B 的文案由模型生成，实测并不会照抄 REFUSAL_ANSWER（少「与该问题相关的可靠依据」
+# 六个字），所以不能整串相等比较，只能按特征串 + 短答双重判定。
+_SELF_REFUSAL_PHRASES = (
+    "知识库中没有找到",
+    "知识库中未找到",
+    "知识库中找不到",
+    "知识库中没有相关",
+    "知识库中未包含",
+)
+_SELF_REFUSAL_MAX_CHARS = 80
+
+
+def _looks_like_self_refusal(answer: str) -> bool:
+    """判断生成结果是否是「模型自述拒答」（路径 B）。
+
+    判定偏保守：命中特征串，或者「道歉开头 + 明确的没找到语义」才算。
+    长答案不做判定——带了实质内容的回答即便夹一句「抱歉」也不该被当成拒答，
+    否则会把「答了但不完整」误判成拒答，反而制造新的假阳性。
+    """
+    text = (answer or "").strip()
+    if not text or len(text) > _SELF_REFUSAL_MAX_CHARS:
+        return False
+    if any(phrase in text for phrase in _SELF_REFUSAL_PHRASES):
+        return True
+    starts_with_apology = text.startswith(("抱歉", "很抱歉", "对不起"))
+    has_miss_wording = any(
+        token in text for token in ("没有找到", "未找到", "找不到", "无法回答", "没有相关")
+    )
+    return starts_with_apology and has_miss_wording
+
 
 def _build_query_route_payload(state: RAGState) -> dict:
     """SSE / metadata 共用的 query_route 载荷格式。
@@ -335,7 +372,13 @@ class ChatService:
                         yield {"event": "token", "data": {"delta": delta}}
                     state["answer"] = "".join(answer_parts)
 
-                    # 6. 答案校验，verify 失败替换为拒答文案
+                    # 6. 路径 B 补判：模型自己说「没找到」时图里没人置 refused
+                    #    不补的话：refused 恒 false ⇒ 拒答那轮照样落 5 条无关引用、
+                    #    照样写语义缓存、刷新后前端分不清"拒答"与"正常回答"
+                    if _looks_like_self_refusal(state["answer"]):
+                        state["refused"] = True
+
+                    # 7. 答案校验，verify 失败替换为拒答文案
                     if settings.verify_answer_enabled:
                         verify_result = await get_answer_verifier().verify(
                             question=state["query"],
@@ -357,12 +400,12 @@ class ChatService:
                             ),
                         }
 
-                # 7. assistant 消息 + citations 同事务落库（保证两者原子）
+                # 8. assistant 消息 + citations 同事务落库（保证两者原子）
                 await self._persist_assistant_message(
                     state, session, verify_result=verify_result
                 )
 
-                # 8. 写回缓存：仅非拒答 + verify 通过路径，写入"问题向量 + 答案 + 引用"
+                # 9. 写回缓存：仅非拒答 + verify 通过路径，写入"问题向量 + 答案 + 引用"
                 # query_embedding 在 cache lookup 阶段已经算过一次，直接复用
                 if (
                     settings.semantic_cache_enabled
@@ -627,7 +670,13 @@ class ChatService:
             answer = "".join(parts)
             state["answer"] = answer
 
-            if settings.verify_answer_enabled:
+            # 路径 B 补判（与 stream_answer / answer_for_evaluation 同一判据）：
+            # 模型自述拒答时，图里没有人置 refused ⇒ 这里补上，
+            # 否则 MCP 会把"拒答"当成正常回答，还回传 5 条无关引用
+            if _looks_like_self_refusal(answer):
+                state["refused"] = True
+
+            if settings.verify_answer_enabled and not state.get("refused"):
                 verify_result = await get_answer_verifier().verify(
                     question=question,
                     answer=answer,
@@ -696,6 +745,11 @@ class ChatService:
                     parts.append(delta)
                 answer = "".join(parts)
                 state["answer"] = answer
+
+                # 路径 B 补判：模型自己说「没找到」时，图里没人置 refused，
+                # 这里显式标上，否则评测会把它记成「该拒未拒」并连带 5 条无关引用
+                if _looks_like_self_refusal(answer):
+                    state["refused"] = True
 
                 if settings.verify_answer_enabled:
                     verify_result = await get_answer_verifier().verify(

@@ -166,6 +166,13 @@ class MessageRead(BaseModel):
     trace_url: str | None = None
     # 语义缓存：True 表示本条 assistant 消息来自缓存命中（跳过了图和 LLM）
     cache_hit: bool = False
+    # 本条 assistant 消息是否是拒答。
+    # ⚠ 这个字段后端一直在写（`messages.extra_metadata.refused`），但**原先没有出口**
+    # ⇒ 刷新后前端只能拿"正文是否等于固定拒答文案"去猜。而拒答有两条路径：检索层
+    # 闸门（文案＝常量 REFUSAL_ANSWER，猜得中）与生成层自述（模型自己组织的措辞，
+    # 猜不中）⇒ 路径 B 在历史里会被当成正常回答。现在直接给出字段，前端优先用它，
+    # 旧消息（无该字段）仍可回退到文案比较。
+    refused: bool = False
 
     @classmethod
     def from_orm(cls, message) -> "MessageRead":  # type: ignore[no-untyped-def]
@@ -191,7 +198,15 @@ class MessageRead(BaseModel):
             trace_id=trace_id,
             trace_url=build_trace_url(trace_id),
             cache_hit=_parse_cache_hit(message.extra_metadata) if is_assistant else False,
+            refused=_parse_refused(message.extra_metadata) if is_assistant else False,
         )
+
+
+def _parse_refused(metadata: dict | None) -> bool:
+    """从 messages.extra_metadata 读取 refused 标记；缺失/非布尔值都按 False。"""
+    if not metadata:
+        return False
+    return metadata.get("refused") is True
 
 
 def _parse_agent_steps(metadata: dict | None) -> list[AgentStep] | None:

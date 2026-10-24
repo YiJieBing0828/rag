@@ -1026,6 +1026,12 @@ export type MessageRead = {
      * Cache Hit
      */
     cache_hit?: boolean;
+    /**
+     * Refused
+     *
+     * 本条 assistant 消息是否是拒答。后端一直写进 metadata，但原先没有出口。
+     */
+    refused?: boolean;
 };
 
 /**

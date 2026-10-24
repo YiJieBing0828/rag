@@ -74,8 +74,10 @@ function fromServerMessage(m: MessageRead): UiMessage {
     traceId: m.trace_id ?? null,
     traceUrl: m.trace_url ?? null,
     cacheHit: Boolean(m.cache_hit),
-    // 历史消息：直接按"内容是否等于固定拒答文案"判定，与后端 metadata.refused 等价
-    refused: m.role === 'assistant' && m.content === REFUSAL_ANSWER,
+    // 优先用后端的 refused 字段；没有该字段的老消息才回退到文案比较。
+    // 回退是必要的（旧数据无字段），但**只能当兜底**：模型自述拒答（路径 B）的
+    // 措辞不是固定文案，靠 content === REFUSAL_ANSWER 永远认不出来。
+    refused: m.role === 'assistant' && (Boolean(m.refused) || m.content === REFUSAL_ANSWER),
     status: 'done',
   }
 }
