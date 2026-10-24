@@ -342,9 +342,44 @@ async def _run_then_dispose(coro) -> None:
         await engine.dispose()
 
 
+async def _mark_failed_best_effort(
+    document_id: UUID, task_id: UUID, message: str
+) -> None:
+    """崩溃兜底：把文档与任务都标成 failed。
+
+    ⚠ 这段代码存在的唯一理由是「**故障处理必须走一条比故障点更底层还有效的通道**」。
+    原先"标失败"写在 `_run_ingest`／`_run_reindex` 的 except 里，用的是同一个
+    AsyncSessionLocal —— 而那次崩溃的根因正是连接池里的连接绑在已关闭的 loop 上
+    ⇒ **兜底自己也失败** ⇒ 文档永久卡在 `parsing`、任务永久卡在 `pending`，
+    前后端都看不出异常（实测登记：最危险的形态是"状态卡住"而不是"状态报错"）。
+
+    现在改成：等 `_run_then_dispose` 把池子 dispose 掉，再**在一个全新的 loop 里**
+    写状态 —— 新 loop ⇒ 新连接，池子已清空 ⇒ 不会拿到旧连接。
+    仍然失败就只打日志，不再往上抛（不能让它盖住原始异常）。
+    """
+    try:
+        await _set_status(document_id, DocumentStatus.FAILED, error_message=message[:500])
+        await _mark_task_failed(task_id, message)
+    except Exception:  # noqa: BLE001 - 兜底的兜底只能记日志
+        logger.exception(
+            "标记失败也失败了: document_id=%s task_id=%s", document_id, task_id
+        )
+
+
+def _run_with_failure_fallback(runner, document_id: UUID, task_id: UUID) -> None:
+    """统一的同步入口：跑任务，崩了就用新 loop 补写失败状态，再把异常抛给 Celery。"""
+    try:
+        asyncio.run(_run_then_dispose(runner(document_id, task_id)))
+    except Exception as exc:
+        message = (str(exc).strip() or exc.__class__.__name__)[:500]
+        # 全新 loop + 已被 dispose 的池子 ⇒ 这条通道不依赖坏掉的那个
+        asyncio.run(_mark_failed_best_effort(document_id, task_id, message))
+        raise
+
+
 def run_ingest_sync(document_id: UUID, task_id: UUID) -> None:
-    asyncio.run(_run_then_dispose(_run_ingest(document_id, task_id)))
+    _run_with_failure_fallback(_run_ingest, document_id, task_id)
 
 
 def run_reindex_sync(document_id: UUID, task_id: UUID) -> None:
-    asyncio.run(_run_then_dispose(_run_reindex(document_id, task_id)))
+    _run_with_failure_fallback(_run_reindex, document_id, task_id)
