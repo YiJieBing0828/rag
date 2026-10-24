@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.db.models import Document, DocumentStatus
+from app.db.models import Document, DocumentStatus, IngestionTask, IngestionTaskStatus
 from app.db.repositories.chunk_repo import _permission_where
 
 
@@ -96,9 +96,20 @@ class DocumentRepository:
         self,
         *,
         permission_tags: list[str] | None = None,
+        only_ready: bool = False,
     ) -> int:
-        """统计可见文档总数。MCP get_knowledge_base_stats 用。"""
+        """统计可见文档数。
+
+        only_ready=False（默认）：全部状态，回答"库里登记了几篇"。
+        only_ready=True：只算 status='ready'，回答"有几篇能被检索到"。
+
+        ⚠ 必须允许调用方显式选择：早期只提供全量计数，而 chunk_count 只算
+        ready 文档的切片 ⇒ 一旦库里有"解析中／失败"的文档，两个数字就不在
+        同一把尺子上（文档 15 篇、切片却只来自 14 篇），外部 Agent 无法解释。
+        """
         stmt = select(func.count()).select_from(Document)
+        if only_ready:
+            stmt = stmt.where(Document.status == DocumentStatus.READY)
         perm_where = _permission_where(permission_tags)
         if perm_where is not None:
             stmt = stmt.where(perm_where)
@@ -109,13 +120,19 @@ class DocumentRepository:
         *,
         permission_tags: list[str] | None = None,
     ) -> datetime | None:
-        """最近一次进入 ready 状态的文档时间。
+        """最近一次"入库任务成功完成"的时间。
 
-        用 updated_at 而非 created_at：reindex 成功后 updated_at 会刷新，
-        外部 Agent 看到的"最近一次入库"含义里包含增量重建。
+        ⚠ 曾经用 `max(Document.updated_at)`，那是错的：`Document.updated_at`
+        带 `onupdate=func.now()`，**改个标签、改个备注都会刷新它** ⇒ 这个字段
+        的真实语义是"最近一次改动"，不是"最近一次入库"。改成取
+        `ingestion_tasks.finished_at`（只算 status='success' 的 ingest/reindex），
+        才是外部 Agent 问"知识库里最近有东西进来是什么时候"的答案。
         """
-        stmt = select(func.max(Document.updated_at)).where(
-            Document.status == DocumentStatus.READY
+        stmt = (
+            select(func.max(IngestionTask.finished_at))
+            .select_from(IngestionTask)
+            .join(Document, Document.id == IngestionTask.document_id)
+            .where(IngestionTask.status == IngestionTaskStatus.SUCCESS)
         )
         perm_where = _permission_where(permission_tags)
         if perm_where is not None:

@@ -19,6 +19,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from app.api.schemas.documents import DocumentStatusValue
+from app.core.config import settings
 from app.core.exceptions import AppException
 from app.core.logging import get_logger
 from app.db.models import DocumentStatus
@@ -88,7 +89,11 @@ def register_tools(mcp: FastMCP) -> None:
         title="知识库问答",
         description=(
             "向知识库提问并得到带引用的答案。检索按调用者的权限标签过滤；"
-            "命中阈值不足或答案校验未通过时返回 refused=true 与统一拒答文案。"
+            "命中阈值不足或答案校验未通过时返回 refused=true 与统一拒答文案。\n\n"
+            "⚠ question 必须是**自包含**的完整问题：这个入口拿不到任何会话历史"
+            "（chat_history 恒为空），所以「它」「那这个呢」「再展开说说」这类指代/"
+            "省略式提问会检索不到东西并被判为无依据。请把上文实体补全后再问，"
+            "例如不要问「那它充满要多久」，要问「Aster-7 充满电需要多长时间」。"
         ),
     )
     async def ask_knowledge_base(question: str, ctx: Context) -> MCPAskAnswer:
@@ -143,6 +148,22 @@ def register_tools(mcp: FastMCP) -> None:
 
         if not filename.strip():
             raise ToolError("filename 不能为空")
+
+        # 体积上限必须在 b64decode **之前**判，而不是交给 DocumentService.upload。
+        # 原因：base64 参数是整串进上下文的，先 decode 再校验等于先分配 3/4 的内存
+        # （50 MB 文件 ⇒ 67 MB 字符串），在大文件上会直接把进程顶到 OOM。
+        max_bytes = settings.upload_max_size_mb * 1024 * 1024
+        # base64 膨胀 4/3，另留 4 KB 给换行/填充
+        max_b64_len = (max_bytes // 3 + 1) * 4 + 4096
+        if len(content_base64) > max_b64_len:
+            raise ToolError(
+                f"content_base64 超过上传上限：解码后约 "
+                f"{len(content_base64) * 3 // 4 / 1024 / 1024:.1f} MB，"
+                f"上限 {settings.upload_max_size_mb} MB。"
+                "大文件请走 REST 上传接口（POST /api/documents，multipart），"
+                "不要用 MCP 工具传整个文件的 base64。"
+            )
+
         try:
             content = base64.b64decode(content_base64, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -266,6 +287,7 @@ def register_tools(mcp: FastMCP) -> None:
 
         return MCPStats(
             document_count=stats.document_count,
+            indexed_document_count=stats.indexed_document_count,
             chunk_count=stats.chunk_count,
             last_indexed_at=stats.last_indexed_at,
         )

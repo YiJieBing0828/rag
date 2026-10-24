@@ -87,11 +87,22 @@ _DELETABLE_STATUSES = frozenset(
 class KnowledgeBaseStats:
     """知识库整体规模快照，按调用者权限范围统计。
 
-    chunk_count 仅计入 status='ready' 的文档，与检索可见性一致；
-    last_indexed_at 取最近一次 ready 文档的 updated_at（含 reindex 后的刷新）。
+    **三个数字必须能互相解释**（早期版本做不到，实测登记为"两个数字两把尺子"）：
+
+    - `document_count`：可见文档总数（含 uploading/parsing/indexing/failed）
+    - `indexed_document_count`：其中 status='ready' 的部分 ⇒ **只有这部分能检索**
+    - `chunk_count`：只统计 ready 文档的切片，与检索可见性一致
+
+    ⇒ 不变式：`indexed_document_count <= document_count`；当有文档在解析中或失败时，
+    两者会出现差值 —— 那个差值就是"库里登记了但检索不到"的文档数。只给总数不
+    给 ready 数时，外部 Agent 会把"15 篇文档"和"727 段切片"当成同一口径。
+
+    `last_indexed_at` 取最近一次入库任务（ingest/reindex）**成功完成**的时间，
+    不是 `Document.updated_at` —— 后者带 onupdate，改标签也会刷新。
     """
 
     document_count: int
+    indexed_document_count: int
     chunk_count: int
     last_indexed_at: datetime | None
 
@@ -339,9 +350,12 @@ class DocumentService:
         """聚合 documents / chunks 总数与最新入库时间。
 
         permission_tags：admin 视角传 None 不限；普通用户传合并后的有效标签，
-        三处统计 SQL 共用 `_permission_where` 保证可见性一致。
+        四处统计 SQL 共用 `_permission_where` 保证可见性一致。
         """
         document_count = await self.repo.count(permission_tags=permission_tags)
+        indexed_document_count = await self.repo.count(
+            permission_tags=permission_tags, only_ready=True
+        )
         chunk_count = await self.chunk_repo.count_visible(
             permission_tags=permission_tags
         )
@@ -350,6 +364,7 @@ class DocumentService:
         )
         return KnowledgeBaseStats(
             document_count=document_count,
+            indexed_document_count=indexed_document_count,
             chunk_count=chunk_count,
             last_indexed_at=last_indexed_at,
         )

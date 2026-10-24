@@ -99,11 +99,23 @@ class MCPStats(BaseModel):
     """get_knowledge_base_stats 出参。
 
     严格按调用者权限范围统计；admin 视角看全量，普通用户只看自己有权访问的。
+
+    `document_count` 与 `chunk_count` 曾经不是同一把尺子（前者含解析中/失败，
+    后者只算 ready）⇒ 只要库里有异常文档，两个数字就无法互相解释。现在把
+    `indexed_document_count` 显式给出来：`document_count - indexed_document_count`
+    就是"登记了但检索不到"的篇数。
     """
 
-    document_count: int
-    chunk_count: int
+    document_count: int = Field(
+        description="可见文档总数，含解析中/失败（不只是能检索的）"
+    )
+    indexed_document_count: int = Field(
+        description="其中 status=ready、真正能被检索到的文档数"
+    )
+    chunk_count: int = Field(
+        description="只统计 ready 文档的切片数 ⇒ 与检索可命中的规模一致"
+    )
     last_indexed_at: datetime | None = Field(
         default=None,
-        description="最近一次进入 ready 状态的文档时间；库为空时返回 null",
+        description="最近一次入库任务（ingest/reindex）成功完成的时间；库为空时 null",
     )
