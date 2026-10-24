@@ -11,6 +11,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -72,9 +73,28 @@ class EvaluationService:
         return await self.run_repo.list_page(page=page, page_size=page_size)
 
     async def delete_run(self, run_id: UUID) -> None:
-        deleted = await self.run_repo.delete(run_id)
-        if not deleted:
+        """删除 run（items 走 ON DELETE CASCADE）。
+
+        ⚠ 正在跑的 run 被删掉时，后台执行器**当时并不知道**：它会继续跑完当前
+        case，然后 INSERT 一条 run_id 已不存在的 item ⇒ `ForeignKeyViolationError`，
+        而外层 `except` 又因为 `run is None` 静默跳过 ⇒ 接口层面看不出任何异常
+        （实测：DELETE 204 之后 8 秒才在日志里炸）。现在两处一起兜：
+        ①这里明确记一条日志，让"删了 ≠ 停了"可见；
+        ②执行器每跑一条 case 之前先确认 run 还在，不在就停手（见
+        `_run_still_exists`）——真正的止损在那里，这里只负责留痕。
+        """
+        run = await self.run_repo.get(run_id)
+        if run is None:
             raise NotFoundError("评测 run 不存在")
+        if run.status == EvaluationRunStatus.RUNNING:
+            logger.warning(
+                "deleting a RUNNING evaluation run: run_id=%s progress=%s/%s "
+                "(当前 case 会跑完，之后执行器自行停止)",
+                run_id,
+                run.progress_completed,
+                run.progress_total,
+            )
+        await self.run_repo.delete(run_id)
         await self.session.commit()
 
     async def list_items(
@@ -109,25 +129,49 @@ class EvaluationService:
         bad_case_category: str | None,
         bad_case_note: str | None,
         is_bad_case: bool | None,
+        changed_fields: set[str] | frozenset[str] | None = None,
     ) -> EvaluationItem:
         """前端覆盖 Bad Case 归因：
 
         - 显式传 is_bad_case=False 时把误判 case 标回非 Bad Case 并清空归因
         - bad_case_category 非空时自动把 is_bad_case 置 True（即使前端没传）
+
+        ⚠ `None` 有两义：**"没传这个字段"** 与 **"显式传了 null 表示清空"**。
+        早期一律按"没传"处理（`if bad_case_note is not None`），后果是
+        **清空备注这个动作没有表达方式** —— 传 null 后库里还是旧值（实测登记）。
+        现在由调用方传 `changed_fields`（FastAPI 侧就是
+        `payload.model_fields_set`），只有真正出现在请求体里的字段才动。
+        `changed_fields=None` 时退化为旧的"非 None 才改"语义，兼容内部调用。
         """
         item = await self.get_item(item_id)
 
-        if is_bad_case is False:
+        explicit = (
+            changed_fields
+            if changed_fields is not None
+            else {
+                name
+                for name, value in (
+                    ("bad_case_category", bad_case_category),
+                    ("bad_case_note", bad_case_note),
+                    ("is_bad_case", is_bad_case),
+                )
+                if value is not None
+            }
+        )
+
+        if "is_bad_case" in explicit and is_bad_case is False:
             item.is_bad_case = False
             item.bad_case_category = None
         else:
-            if bad_case_category is not None:
+            # 归因分类：显式传 null ⇒ 清空分类，但不动 is_bad_case
+            if "bad_case_category" in explicit:
                 item.bad_case_category = bad_case_category
-                item.is_bad_case = True
-            elif is_bad_case is True:
+                if bad_case_category is not None:
+                    item.is_bad_case = True
+            if "is_bad_case" in explicit and is_bad_case is True:
                 item.is_bad_case = True
 
-        if bad_case_note is not None:
+        if "bad_case_note" in explicit:
             item.bad_case_note = bad_case_note
 
         await self.session.commit()
@@ -165,7 +209,17 @@ async def execute_evaluation_run(run_id: UUID) -> None:
         cases = load_dataset(dataset_name)
 
         # 阶段 1：逐条跑 RAG，每条独立事务写一行 item（前端能轮询到进度）
-        for case in cases:
+        # 每条之前先确认 run 还在：删了 run 之后继续跑，只会在 INSERT 时撞外键，
+        # 白跑一次 LLM 调用，而且错误被外层 except 静默吞掉
+        for index, case in enumerate(cases):
+            if not await _run_still_exists(run_id):
+                logger.warning(
+                    "evaluation run 已被删除，停止剩余 case: run_id=%s 已完成 %s/%s",
+                    run_id,
+                    index,
+                    len(cases),
+                )
+                return
             await _run_single_case(run_id, case)
 
         # 阶段 2：批量算 RAGAS + Bad Case 归因 + 聚合
@@ -188,6 +242,12 @@ async def execute_evaluation_run(run_id: UUID) -> None:
                 run.finished_at = datetime.now(timezone.utc)
                 run.error_message = (str(exc).strip() or exc.__class__.__name__)[:500]
                 await session.commit()
+
+
+async def _run_still_exists(run_id: UUID) -> bool:
+    """run 是否还在（被删掉就返回 False）。执行器每条 case 之前调一次。"""
+    async with AsyncSessionLocal() as session:
+        return await EvaluationRunRepository(session).get(run_id) is not None
 
 
 async def _run_single_case(run_id: UUID, case) -> None:
@@ -230,15 +290,25 @@ async def _run_single_case(run_id: UUID, case) -> None:
             citation_hit=citation_hit,
             refusal_correct=refusal_correct,
         )
-        await EvaluationItemRepository(session).add(item)
+        try:
+            await EvaluationItemRepository(session).add(item)
 
-        # 同事务更新 run 进度
-        run = await EvaluationRunRepository(session).get(run_id)
-        if run is not None:
-            run.progress_completed += 1
-            if answer.error_message:
-                run.progress_failed += 1
-        await session.commit()
+            # 同事务更新 run 进度
+            run = await EvaluationRunRepository(session).get(run_id)
+            if run is not None:
+                run.progress_completed += 1
+                if answer.error_message:
+                    run.progress_failed += 1
+            await session.commit()
+        except IntegrityError:
+            # run 在"上一步检查之后、这一步 INSERT 之前"被删掉的竞态窗口。
+            # 兜住它，别把一条可预期的竞态升级成整轮 run 的 failed
+            await session.rollback()
+            logger.warning(
+                "case 结果丢弃：run 已被删除 run_id=%s case_id=%s",
+                run_id,
+                case.case_id,
+            )
 
 
 async def _finalize_run(run_id: UUID) -> None:

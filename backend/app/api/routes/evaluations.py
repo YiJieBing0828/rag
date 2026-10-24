@@ -162,5 +162,8 @@ async def update_evaluation_item(
         bad_case_category=payload.bad_case_category,
         bad_case_note=payload.bad_case_note,
         is_bad_case=payload.is_bad_case,
+        # 「没传字段」vs「显式传 null 表示清空」在这里分开 —— 只传值的话
+        # 服务层无法区分两者，清空动作就永远没有表达方式
+        changed_fields=payload.model_fields_set,
     )
     return EvaluationItemRead.model_validate(item)
