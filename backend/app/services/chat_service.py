@@ -22,6 +22,7 @@ from app.db.repositories.conversation_repo import ConversationRepository
 from app.db.session import AsyncSessionLocal
 from app.ingestion import embedder
 from app.llm.answer_verifier import VerifyResult, get_answer_verifier
+from app.llm.citation_checker import check_citation_alignment, log_citation_issues
 from app.llm.prompts import REFUSAL_ANSWER
 from app.retrieval.vector_retriever import RetrievedChunk
 from app.services.permission_service import (
@@ -377,6 +378,19 @@ class ChatService:
                     #    照样写语义缓存、刷新后前端分不清"拒答"与"正常回答"
                     if _looks_like_self_refusal(state["answer"]):
                         state["refused"] = True
+
+                    # 6.5 引用编号一致性检查：代码级硬检查，**只记日志、不改行为**
+                    #     模型自己写的 [N] 与后端按位置赋的 ordinal 可能对不上，而
+                    #     answer_verifier 是交给同一个 LLM 判的，实测会被降级成
+                    #     "这些片段里有没有这句话"，编号错位照样放过。这里对不上就
+                    #     只留一条 warning，等观测到足够样本再决定要不要升级为拦截。
+                    log_citation_issues(
+                        check_citation_alignment(
+                            state["answer"], list(state.get("retrieved_chunks", []))
+                        ),
+                        question=state["query"],
+                        trace_id=get_current_trace_id(),
+                    )
 
                     # 7. 答案校验，verify 失败替换为拒答文案
                     if settings.verify_answer_enabled:
