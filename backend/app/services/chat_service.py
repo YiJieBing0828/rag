@@ -22,7 +22,11 @@ from app.db.repositories.conversation_repo import ConversationRepository
 from app.db.session import AsyncSessionLocal
 from app.ingestion import embedder
 from app.llm.answer_verifier import VerifyResult, get_answer_verifier
-from app.llm.citation_checker import check_citation_alignment, log_citation_issues
+from app.llm.citation_checker import (
+    check_citation_alignment,
+    check_citation_alignment_texts,
+    log_citation_issues,
+)
 from app.llm.prompts import REFUSAL_ANSWER
 from app.retrieval.vector_retriever import RetrievedChunk
 from app.services.permission_service import (
@@ -165,6 +169,30 @@ def _serialize_citation(chunk: RetrievedChunk, ordinal: int) -> dict:
         "quote": chunk.content,
         "retrieval_meta": _build_retrieval_meta(chunk),
     }
+
+
+def _log_alignment_from_citations(state: RAGState, citations: list[dict]) -> None:
+    """热路径（缓存命中）的编号一致性检查。
+
+    缓存命中跳过了生成与校验，但"正文里的 [N] 指错"这件事照样存在 ——
+    缓存里躺的可能就是旧代码生成的错答案。这里用缓存快照里的 `quote`
+    当作片段原文重建列表，再走同一个检查。
+
+    `ordinal` 缺失时按位置补（与 `_persist_cached_assistant_message`
+    落库时的兜底口径一致，避免两处编号规则打架）。
+    """
+    if not citations:
+        return
+    texts: list[str] = [""] * len(citations)
+    for idx, c in enumerate(citations):
+        ordinal = int(c.get("ordinal") or idx + 1)
+        if 1 <= ordinal <= len(texts):
+            texts[ordinal - 1] = str(c.get("quote") or "")
+    log_citation_issues(
+        check_citation_alignment_texts(state["answer"], texts),
+        question=state.get("query") or state.get("question") or "",
+        trace_id=get_current_trace_id(),
+    )
 
 
 @dataclass(frozen=True)
@@ -489,6 +517,10 @@ class ChatService:
         state["refused"] = False
         # query_route / agent_steps / retrieved_chunks 留空：缓存命中本身就是
         # "跳过完整 RAG 链路"，前端按缺失隐藏所有调试面板
+
+        # 但"跳过链路"不等于"跳过检查"：编号一致性照样要查一遍，
+        # 否则热路径永远是盲区（2026-10-27 实测：改了代码却一条日志都没有）
+        _log_alignment_from_citations(state, cached.citations)
 
         await self._persist_user_message(state, session)
         yield {

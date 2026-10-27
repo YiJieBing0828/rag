@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import Iterator
 
 from app.core.logging import get_logger
@@ -106,11 +107,23 @@ def check_citation_alignment(
     answer: str,
     chunks: list[RetrievedChunk],
 ) -> list[CitationIssue]:
-    """把"标了 [N] 的那一句"和"第 N 段原文"对一遍。
+    """冷路径入口：检索结果直接给 `RetrievedChunk`，按顺序转成原文再查。"""
+    return check_citation_alignment_texts(
+        answer, [c.content or "" for c in chunks]
+    )
 
-    返回空列表 = 没发现问题（注意：**没发现问题 ≠ 校验通过**，只代表硬 token 都对得上）。
+
+def check_citation_alignment_texts(
+    answer: str,
+    chunk_texts: Sequence[str],
+) -> list[CitationIssue]:
+    """核心实现：只认「按 ordinal 排好的原文列表」，第 N 段的原文是 `chunk_texts[N-1]`。
+
+    为什么不直接收 `RetrievedChunk`：**缓存命中路径没有 retrieved_chunks** ——
+    它拿到的是缓存快照里的 `citations`（字段是 `quote`，不是 `content`）。
+    拆成纯文本入参后，两条路径都能用同一个检查，不必为了类型去伪造一堆 UUID。
     """
-    if not answer or not chunks:
+    if not answer or not chunk_texts:
         return []
 
     issues: list[CitationIssue] = []
@@ -125,7 +138,7 @@ def check_citation_alignment(
             continue
 
         for ordinal in ordinals:
-            if ordinal < 1 or ordinal > len(chunks):
+            if ordinal < 1 or ordinal > len(chunk_texts):
                 issues.append(
                     CitationIssue(
                         ordinal=ordinal,
@@ -137,7 +150,7 @@ def check_citation_alignment(
                 )
                 continue
 
-            target = _norm(chunks[ordinal - 1].content or "")
+            target = _norm(chunk_texts[ordinal - 1] or "")
             missing = tuple(t for t in tokens if _norm(t) not in target)
             if missing:
                 issues.append(

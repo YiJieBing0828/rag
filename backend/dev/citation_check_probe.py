@@ -25,7 +25,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.retrieval.vector_retriever import RetrievedChunk  # noqa: E402
 
 # ↓↓↓ 这里就是你要补的模块。函数名/签名按契约来，实现你自己写。
-from app.llm.citation_checker import check_citation_alignment
+from app.llm.citation_checker import (
+    check_citation_alignment,
+    check_citation_alignment_texts,
+)
 
 # 真实形态：第一句的结论来自片段 1，模型却标了 [2]；第二句的引用是对的。
 ANSWER = """从 20% 充到 80% 约需 78 分钟；充满后自动进入浮充 [2]。
@@ -98,14 +101,17 @@ def main() -> int:
             "说明 [2] 那一句没有被解析到，或者片段 2 被误判为「对得上」。"
         )
 
-    # 断言 2：那条 issue 的 missing 里必须含 78（这是「依据不在这段」的硬证据）
+    # 断言 2：那条 issue 的 missing 里必须含「78 分钟」这个**完整 token**
+    # （不是只含 "78" 子串 —— 只查子串的话，一个裸数字 '78 ' 也能蒙混过关，
+    #  2026-10-27 实测踩过这个坑）
     if hit:
         missing = _get(hit[0], "missing") or ()
-        missing_str = " ".join(str(x) for x in missing)
-        if "78" not in missing_str:
+        missing_norm = {str(x).replace(" ", "").lower() for x in missing}
+        if "78分钟" not in missing_norm:
             failures.append(
-                f"断言2 失败：ordinal==2 的 missing 里没有 78（实际={missing_str!r}）。"
-                "说明硬 token 没抽到「78 分钟」这种数字+单位形态。"
+                f"断言2 失败：ordinal==2 的 missing 里没有完整的「78分钟」token"
+                f"（实际={sorted(missing_norm)}）。"
+                "说明硬 token 没抽到「数字+单位」形态，或单位表和预期不一致。"
             )
 
     # 断言 3（反向）：编号 1 的那句是真的，不该被误报
@@ -116,6 +122,19 @@ def main() -> int:
             "说明抽取或匹配过宽，会变成噪音。"
         )
 
+    # 断言 4：纯文本入口（热路径/缓存命中用）与 chunks 入口结果必须一致
+    # 缓存命中路径没有 retrieved_chunks，只能用 citations 里的 quote 重建原文；
+    # 两条路径必须走同一套判断，否则同一个答案在冷路径被抓、在热路径被放过。
+    texts = [c.content for c in CHUNKS]
+    issues_texts = list(check_citation_alignment_texts(ANSWER, texts) or [])
+    shape_chunks = [( _get(i, "ordinal"), tuple(_get(i, "missing") or ())) for i in issues]
+    shape_texts = [( _get(i, "ordinal"), tuple(_get(i, "missing") or ())) for i in issues_texts]
+    if shape_chunks != shape_texts:
+        failures.append(
+            f"断言4 失败：chunks 入口与 texts 入口结果不一致（{shape_chunks} vs {shape_texts}）。"
+            "说明两个入口没共用同一套判断逻辑，热路径会漏检。"
+        )
+
     if failures:
         print()
         for f in failures:
@@ -124,8 +143,9 @@ def main() -> int:
         print("→ 探针未通过。先看第一条失败，改一处，再跑一次。")
         return 1
 
-    print("✓ 三条断言全过：编号错位被抓到、依据缺失被看到、正确引用没被误伤。")
-    print("→ 下一步：起前端跑一次端到端，确认日志里有 warning 且回答没变。")
+    print("✓ 四条断言全过：编号错位被抓到、依据缺失被看到、正确引用没被误伤、"
+          "冷热两路结果一致。")
+    print("→ 下一步：重启后端，问一个会命中缓存的问题，确认热路径也有 warning。")
     return 0
 
 
