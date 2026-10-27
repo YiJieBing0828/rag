@@ -135,6 +135,39 @@ def main() -> int:
             "说明两个入口没共用同一套判断逻辑，热路径会漏检。"
         )
 
+    # 断言 5：免责子句里的数字不能被当成证据（2026-10-27 真实误报样本）
+    # 模型原话形态：「……约需 78 分钟；文档中未说明从 0% 到 100% 的完整充满时间 [2]」
+    # 0% / 100% 本来就是"文档里没有"，拿它比对必然误报；但 78 分钟必须还报得出来，
+    # 所以只能"剔子句"，不能"跳过整句"。
+    neg_answer = (
+        "从 20% 充到 80% 约需 78 分钟；"
+        "文档中未说明从 0% 到 100% 的完整充满时间 [2]。"
+    )
+    neg_issues = list(
+        check_citation_alignment_texts(neg_answer, [c.content for c in CHUNKS]) or []
+    )
+    neg_hit = [it for it in neg_issues if _get(it, "ordinal") == 2]
+    if not neg_hit:
+        failures.append(
+            "断言5 失败：免责句样本没有报出 ordinal==2。"
+            "说明为了剔除噪音把整句都跳过了，正向证据（78 分钟）被一起丢掉。"
+        )
+    else:
+        neg_missing = {
+            str(x).replace(" ", "").lower() for x in (_get(neg_hit[0], "missing") or ())
+        }
+        if "78分钟" not in neg_missing:
+            failures.append(
+                f"断言5 失败：正向证据「78分钟」没被报出来（实际={sorted(neg_missing)}）。"
+            )
+        noise = {
+            str(x).replace(" ", "").lower() for x in (_get(neg_hit[0], "tokens") or ())
+        } & {"0%", "100%"}
+        if noise:
+            failures.append(
+                f"断言5 失败：免责子句里的 {sorted(noise)} 仍被抽成证据 token（误报没修掉）。"
+            )
+
     if failures:
         print()
         for f in failures:
@@ -143,8 +176,8 @@ def main() -> int:
         print("→ 探针未通过。先看第一条失败，改一处，再跑一次。")
         return 1
 
-    print("✓ 四条断言全过：编号错位被抓到、依据缺失被看到、正确引用没被误伤、"
-          "冷热两路结果一致。")
+    print("✓ 五条断言全过：编号错位被抓到、依据缺失被看到、正确引用没被误伤、"
+          "冷热两路结果一致、免责句噪音被剔除且正向证据仍保留。")
     print("→ 下一步：重启后端，问一个会命中缓存的问题，确认热路径也有 warning。")
     return 0
 

@@ -46,6 +46,26 @@ _STOPWORDS = frozenset(
     {"the", "and", "for", "with", "that", "this", "from", "http", "https", "www", "com"}
 )
 
+# 子句级否定剔除：模型常写「文档中未说明从 0% 到 100% 的时间 [2]」这类免责句，
+# 那串数字本来就"文档里没有"，拿去比对必然误报。这里**只剔除含否定词的子句**，
+# 不跳过整句 —— 否则同一句里的正向证据（78 分钟）会被一起丢掉。
+_CLAUSE_SEP = re.compile(r"[；;，,、]")
+_NEGATIVE_MARKERS = (
+    "未说明",
+    "未提及",
+    "未给出",
+    "未明确",
+    "未提供",
+    "未包含",
+    "未记录",
+    "没有给出",
+    "没有说明",
+    "没有提及",
+    "无法确定",
+    "不详",
+    "不包含",
+)
+
 # 只在句末切句：顿号、逗号、分号都不断开（否则"…约需 78 分钟；充满后…[2]"会被切碎，
 # 引用编号跟数字分到两个句子去，检查直接失效）
 _SENTENCE_END = re.compile(r"(?<=[。！？!?\n])")
@@ -82,12 +102,27 @@ def _iter_sentences(answer: str) -> Iterator[str]:
             yield sentence
 
 
+def _positive_part(sentence: str) -> str:
+    """剔掉带否定词的子句，只留下"主张了某个事实"的部分。
+
+    例：`从 20% 充到 80% 约需 78 分钟；文档中未说明从 0% 到 100% 的时间 [2]`
+    ⇒ 保留前一个子句，丢掉后一个 ⇒ token 只会有 78 分钟这类正向证据。
+    """
+    kept = [
+        clause
+        for clause in _CLAUSE_SEP.split(sentence)
+        if not any(marker in clause for marker in _NEGATIVE_MARKERS)
+    ]
+    return "".join(kept)
+
+
 def _extract_hard_tokens(sentence: str) -> tuple[str, ...]:
     """抽硬 token，按出现顺序去重。抽不到就返回空元组（该句不做判断）。"""
+    positive = _positive_part(sentence)
     found: list[str] = []
-    for match in _NUMBER_UNIT.finditer(sentence):
+    for match in _NUMBER_UNIT.finditer(positive):
         found.append(match.group(0))
-    for match in _IDENT.finditer(sentence):
+    for match in _IDENT.finditer(positive):
         token = match.group(0)
         if token.lower() in _STOPWORDS:
             continue
